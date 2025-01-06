@@ -4,6 +4,8 @@ import uuid
 from threading import Thread
 from rich.console import Console
 from rich.table import Table
+import telegram
+import asyncio
 
 # إعداد مكتبة rich
 console = Console()
@@ -12,6 +14,13 @@ console = Console()
 url_tap = "https://gold-eagle-api.fly.dev/tap"
 url_wallet = "https://gold-eagle-api.fly.dev/wallet/my"
 url_progress = "https://gold-eagle-api.fly.dev/user/me/progress"
+
+# توكين البوت الخاص بتليجرام
+TELEGRAM_TOKEN = "5167943610:AAF04jje41xgENoBO-t_INDCtBYs0m81mK8"
+CHAT_ID = "1541678512"  # استبدل هذا بـ chat_id الخاص بك
+
+# إنشاء الكائن الخاص بالبوت
+bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
 # عرض جدول التقدم بشكل منسق باستخدام rich
 def display_rich_progress_table(token, progress_data):
@@ -40,7 +49,7 @@ def get_progress_data(headers):
         return None
 
 # دالة لجمع العملات باستخدام الطاقة المتاحة
-def collect_coins_using_energy(energy, headers, token):
+def collect_coins_using_energy(energy, headers, token, loop):
     try:
         if energy > 0:
             timestamp = int(time.time())
@@ -58,7 +67,11 @@ def collect_coins_using_energy(energy, headers, token):
             if response.status_code == 200:
                 data = response.json()
                 if 'coins_amount' in data:
-                    console.print(f"[green]✅ [Token {token[:5]}] Coins collected! Total coins: {data['coins_amount']}[/green]")
+                    coins_collected = data['coins_amount']
+                    console.print(f"[green]✅ [Token {token[:5]}] Coins collected! Total coins: {coins_collected}[/green]")
+                    
+                    # إرسال إشعار عبر التليجرام
+                    asyncio.run_coroutine_threadsafe(send_telegram_notification(token, coins_collected), loop)
                 else:
                     console.print(f"[red]❌ [Token {token[:5]}] Failed to collect coins. Invalid data received.[/red]")
             else:
@@ -67,6 +80,14 @@ def collect_coins_using_energy(energy, headers, token):
             console.print(f"[yellow]⚠️ [Token {token[:5]}] Not enough energy to collect coins. Waiting for energy to recharge...[/yellow]")
     except Exception as e:
         console.print(f"[red]❌ [Token {token[:5]}] Error collecting coins: {e}[/red]")
+
+# دالة لإرسال إشعار عبر التليجرام (تعديلها لتصبح غير متزامنة)
+async def send_telegram_notification(token, coins_collected):
+    message = f"✅ [Token {token[:5]}] Coins collected! Total coins: {coins_collected}"
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=message)
+    except Exception as e:
+        console.print(f"[red]❌ Failed to send Telegram notification for token {token[:5]}. Error: {e}[/red]")
 
 # دالة تشغيل التوكن
 def run_token_process(token):
@@ -78,6 +99,10 @@ def run_token_process(token):
     }
 
     try:
+        # إنشاء حلقة أحداث جديدة داخل كل Thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         while True:
             # جلب بيانات التقدم
             progress_data = get_progress_data(headers)
@@ -89,7 +114,7 @@ def run_token_process(token):
                 display_rich_progress_table(token, progress_data)
 
                 # جمع العملات
-                collect_coins_using_energy(energy, headers, token)
+                collect_coins_using_energy(energy, headers, token, loop)
 
             # الانتظار دقيقة قبل المحاولة التالية
             time.sleep(60)
